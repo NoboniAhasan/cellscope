@@ -15,6 +15,7 @@ import {
   User,
 } from '../../types';
 import type { CellScopeApi } from '../api';
+import { generateMockDetections } from './detector';
 import { mockStorage, StoredUser } from './storage';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,7 +23,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class MockAdapter implements CellScopeApi {
   // auth
   async register(p: { name: string; email: string; password: string; role: Role }): Promise<AuthResponse> {
-    await delay(350);
+    await delay(300);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -67,7 +68,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async login(p: { email: string; password: string }): Promise<AuthResponse> {
-    await delay(350);
+    await delay(300);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -102,7 +103,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async me(): Promise<User> {
-    await delay(100);
+    await delay(50);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = {
@@ -116,13 +117,13 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async logout(): Promise<void> {
-    await delay(100);
+    await delay(50);
     mockStorage.setAuth(null);
   }
 
   // experiments
   async createExperiment(p: { title: string; description?: string; sampleReference?: string }): Promise<Experiment> {
-    await delay(300);
+    await delay(200);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'You must be logged in to create experiments.' };
@@ -147,7 +148,7 @@ export class MockAdapter implements CellScopeApi {
       createdAt: now,
       updatedAt: now,
       files: [],
-      isDemo: true, // Always true for mock/sample data per AGENTS.md
+      isDemo: true,
     };
 
     experiments.unshift(newExperiment);
@@ -156,7 +157,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async listExperiments(p?: { search?: string }): Promise<Experiment[]> {
-    await delay(250);
+    await delay(150);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
@@ -165,9 +166,7 @@ export class MockAdapter implements CellScopeApi {
 
     let experiments = mockStorage.getExperiments();
 
-    // Reviewer role rule: reviewers only see experiments assigned to them
     if (auth.user.role === 'reviewer') {
-      // Review assignments are wired in M4; currently empty for reviewers
       return [];
     }
 
@@ -181,14 +180,13 @@ export class MockAdapter implements CellScopeApi {
       );
     }
 
-    // Return newest first
     return [...experiments].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
   }
 
   async getExperiment(id: number): Promise<Experiment> {
-    await delay(200);
+    await delay(150);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
@@ -204,7 +202,6 @@ export class MockAdapter implements CellScopeApi {
     }
 
     if (auth.user.role === 'reviewer') {
-      // Reviewer access check per spec: unassigned access rejects with 403
       const err: ApiError = {
         status: 403,
         code: 'FORBIDDEN',
@@ -220,7 +217,7 @@ export class MockAdapter implements CellScopeApi {
     id: number,
     p: Partial<Pick<Experiment, 'title' | 'description' | 'sampleReference'>>,
   ): Promise<Experiment> {
-    await delay(250);
+    await delay(150);
     const experiments = mockStorage.getExperiments();
     const idx = experiments.findIndex((e) => e.id === id);
     if (idx === -1) {
@@ -243,43 +240,271 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async deleteExperiment(id: number): Promise<void> {
-    await delay(250);
+    await delay(150);
     const experiments = mockStorage.getExperiments();
     const filtered = experiments.filter((e) => e.id !== id);
     mockStorage.saveExperiments(filtered);
   }
 
-  async uploadImage(_experimentId: number, _file: File): Promise<ExperimentFile> {
-    throw new Error('MockAdapter: uploadImage scheduled for Milestone M2');
+  async uploadImage(experimentId: number, file: File): Promise<ExperimentFile> {
+    await delay(350);
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === experimentId);
+    if (!exp) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Experiment not found.' };
+      throw err;
+    }
+
+    // Validate size (max 20 MB)
+    const MAX_SIZE = 20 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      const err: ApiError = {
+        status: 400,
+        code: 'FILE_TOO_LARGE',
+        message: 'Image exceeds the maximum allowable file size of 20 MB.',
+      };
+      throw err;
+    }
+
+    // Validate mime/extension
+    const validExtensions = ['.png', '.jpg', '.jpeg', '.tif', '.tiff'];
+    const lowerName = file.name.toLowerCase();
+    const hasValidExt = validExtensions.some((ext) => lowerName.endsWith(ext));
+    const validMimes = ['image/png', 'image/jpeg', 'image/tiff'];
+    const hasValidMime = validMimes.includes(file.type);
+
+    if (!hasValidExt && !hasValidMime) {
+      const err: ApiError = {
+        status: 400,
+        code: 'INVALID_FILE_TYPE',
+        message: 'Unsupported format. Only PNG, JPEG, and TIFF microscopy images are accepted.',
+      };
+      throw err;
+    }
+
+    // Read file as data URL
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read image file.'));
+      reader.readAsDataURL(file);
+    });
+
+    // Obtain intrinsic dimensions
+    const dimensions: { width: number; height: number } = await new Promise((resolve) => {
+      if (typeof Image === 'undefined') {
+        resolve({ width: 800, height: 600 });
+        return;
+      }
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 800, height: img.naturalHeight || 600 });
+      img.onerror = () => resolve({ width: 800, height: 600 });
+      img.src = dataUrl;
+    });
+
+    const allFiles = experiments.flatMap((e) => e.files);
+    const nextFileId = allFiles.length > 0 ? Math.max(...allFiles.map((f) => f.id)) + 1 : 101;
+
+    const newFile: ExperimentFile = {
+      id: nextFileId,
+      experimentId,
+      filename: file.name,
+      fileType: file.type || 'image/png',
+      width: dimensions.width,
+      height: dimensions.height,
+      sizeBytes: file.size,
+      originalUrl: dataUrl,
+      uploadedAt: new Date().toISOString(),
+    };
+
+    exp.files.unshift(newFile);
+    mockStorage.saveExperiments(experiments);
+    mockStorage.saveImageData(nextFileId, dataUrl);
+    return newFile;
+  }
+
+  // Pre-run quality assessment
+  async assessQuality(p: { experimentId: number; fileId: number }): Promise<QualityWarning[]> {
+    await delay(200);
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === p.experimentId);
+    const file = exp?.files.find((f) => f.id === p.fileId);
+
+    const warnings: QualityWarning[] = [];
+    if (!file) return warnings;
+
+    // Check image dimensions
+    if (file.width >= 4000 || file.height >= 4000) {
+      warnings.push({
+        code: 'VERY_LARGE_IMAGE',
+        message: `High resolution scan (${file.width} × ${file.height} px).`,
+        suggestion: 'Processing may take longer than usual. Standard Otsu watershed will be applied.',
+        severity: 'info',
+      });
+    }
+
+    // Informational notice on presets
+    if (file.filename.toLowerCase().includes('fluor') || file.filename.toLowerCase().includes('dapi')) {
+      warnings.push({
+        code: 'LOW_CONTRAST',
+        message: 'Dark background detected in specimen name/metadata.',
+        suggestion: 'Verify that Polarity is set to "Bright on dark" for optimal nucleus detection.',
+        severity: 'info',
+      });
+    }
+
+    return warnings;
   }
 
   // analysis
-  async runAnalysis(_p: {
+  async runAnalysis(p: {
     experimentId: number;
     fileId: number;
     parameters: AnalysisParameters;
   }): Promise<AnalysisRun> {
-    throw new Error('MockAdapter: runAnalysis scheduled for Milestone M2');
+    // Realistic simulation latency: 1500ms
+    await delay(1500);
+
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === p.experimentId);
+    if (!exp) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Experiment not found.' };
+      throw err;
+    }
+
+    const file = exp.files.find((f) => f.id === p.fileId);
+    if (!file) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Target image file not found.' };
+      throw err;
+    }
+
+    const runs = mockStorage.getRuns();
+    const nextRunId = runs.length > 0 ? Math.max(...runs.map((r) => r.id)) + 1 : 1;
+
+    // Generate mock candidate detections & metrics
+    const { measurements, warnings, maskDataUrl } = generateMockDetections(
+      file.width,
+      file.height,
+      p.parameters,
+      nextRunId,
+    );
+
+    const newRun: AnalysisRun = {
+      id: nextRunId,
+      experimentId: p.experimentId,
+      fileId: p.fileId,
+      version: 1,
+      kind: 'automated',
+      status: 'completed',
+      parameters: p.parameters,
+      algorithmVersion: 'cellscope-otsu-watershed-v1',
+      objectCount: measurements.length,
+      annotatedImageUrl: file.originalUrl,
+      maskUrl: maskDataUrl,
+      createdAt: new Date().toISOString(),
+      createdBy: auth.user.id,
+      isDemo: true, // Always true for mock results per honesty rules
+    };
+
+    runs.unshift(newRun);
+    mockStorage.saveRuns(runs);
+
+    // Persist measurements and quality warnings
+    const measurementsMap = mockStorage.getMeasurements();
+    measurementsMap[nextRunId] = measurements;
+    mockStorage.saveMeasurements(measurementsMap);
+
+    const qualityMap = mockStorage.getQualityWarnings();
+    qualityMap[nextRunId] = warnings;
+    mockStorage.saveQualityWarnings(qualityMap);
+
+    // Update experiment latestRunId
+    exp.latestRunId = nextRunId;
+    mockStorage.saveExperiments(experiments);
+
+    return newRun;
   }
 
-  async getAnalysis(_id: number): Promise<AnalysisRun> {
-    throw new Error('MockAdapter: getAnalysis scheduled for Milestone M2');
+  async getAnalysis(id: number): Promise<AnalysisRun> {
+    await delay(150);
+    const runs = mockStorage.getRuns();
+    const run = runs.find((r) => r.id === id);
+    if (!run) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Analysis run not found.' };
+      throw err;
+    }
+    return run;
   }
 
-  async listRuns(_experimentId: number): Promise<AnalysisRun[]> {
-    throw new Error('MockAdapter: listRuns scheduled for Milestone M2/M3');
+  async listRuns(experimentId: number): Promise<AnalysisRun[]> {
+    await delay(150);
+    const runs = mockStorage.getRuns();
+    return runs
+      .filter((r) => r.experimentId === experimentId)
+      .sort((a, b) => b.version - a.version);
   }
 
-  async getMeasurements(_runId: number): Promise<CellMeasurement[]> {
-    throw new Error('MockAdapter: getMeasurements scheduled for Milestone M2');
+  async getMeasurements(runId: number): Promise<CellMeasurement[]> {
+    await delay(150);
+    const measurementsMap = mockStorage.getMeasurements();
+    return measurementsMap[runId] || [];
   }
 
-  async getQuality(_runId: number): Promise<QualityWarning[]> {
-    throw new Error('MockAdapter: getQuality scheduled for Milestone M2');
+  async getQuality(runId: number): Promise<QualityWarning[]> {
+    await delay(150);
+    const qualityMap = mockStorage.getQualityWarnings();
+    return qualityMap[runId] || [];
   }
 
-  async assessQuality(_p: { experimentId: number; fileId: number }): Promise<QualityWarning[]> {
-    throw new Error('MockAdapter: assessQuality scheduled for Milestone M2');
+  async exportCsv(runId: number): Promise<Blob> {
+    await delay(200);
+    const measurementsMap = mockStorage.getMeasurements();
+    const items = measurementsMap[runId] || [];
+
+    const headers = [
+      'Candidate_Object_ID',
+      'Area_px2',
+      'Perimeter_px',
+      'Circularity',
+      'Centroid_X',
+      'Centroid_Y',
+      'BBox_X',
+      'BBox_Y',
+      'BBox_Width',
+      'BBox_Height',
+      'Source',
+    ];
+
+    const rows = items.map((m) => [
+      m.id,
+      m.area,
+      m.perimeter,
+      m.circularity,
+      m.centroid.x,
+      m.centroid.y,
+      m.bbox.x,
+      m.bbox.y,
+      m.bbox.width,
+      m.bbox.height,
+      m.source,
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  }
+
+  async exportAnnotatedImage(_runId: number): Promise<Blob> {
+    throw new Error('MockAdapter: exportAnnotatedImage scheduled for Milestone M5');
+  }
+
+  async exportPdf(_runId: number): Promise<Blob> {
+    throw new Error('MockAdapter: exportPdf scheduled for Milestone M5');
   }
 
   async saveCorrection(_p: {
@@ -296,25 +521,13 @@ export class MockAdapter implements CellScopeApi {
     throw new Error('MockAdapter: compareRuns scheduled for Milestone M5');
   }
 
-  async exportCsv(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportCsv scheduled for Milestone M2');
-  }
-
-  async exportAnnotatedImage(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportAnnotatedImage scheduled for Milestone M5');
-  }
-
-  async exportPdf(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportPdf scheduled for Milestone M5');
-  }
-
   // reviews
   async sendForReview(_p: { runId: number; reviewerEmail: string }): Promise<ReviewAssignment> {
     throw new Error('MockAdapter: sendForReview scheduled for Milestone M4');
   }
 
   async listAssignedReviews(): Promise<Array<ReviewAssignment & { experiment: Experiment }>> {
-    return []; // Empty until assignments created in M4
+    return [];
   }
 
   async getReview(

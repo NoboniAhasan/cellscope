@@ -1,12 +1,19 @@
-import { Experiment, Role, User } from '../../types';
+import { AnalysisRun, CellMeasurement, Experiment, QualityWarning, Role, User } from '../../types';
 
 export interface StoredUser extends User {
-  passwordHash: string; // for mock verification
+  passwordHash: string;
 }
 
 const STORAGE_KEY_USERS = 'cellscope_users';
 const STORAGE_KEY_AUTH = 'cellscope_auth_user';
 const STORAGE_KEY_EXPERIMENTS = 'cellscope_experiments';
+const STORAGE_KEY_RUNS = 'cellscope_runs';
+const STORAGE_KEY_MEASUREMENTS = 'cellscope_measurements';
+const STORAGE_KEY_QUALITY = 'cellscope_quality_warnings';
+const STORAGE_KEY_IMAGE_DATA = 'cellscope_image_data';
+
+export const SAMPLE_FLUORESCENCE_IMAGE =
+  'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="450" viewBox="0 0 600 450"><rect width="600" height="450" fill="%23050914"/><circle cx="150" cy="120" r="32" fill="%2338bdf8" filter="blur(3px)" opacity="0.9"/><circle cx="150" cy="120" r="22" fill="%23e0f2fe"/><circle cx="360" cy="180" r="40" fill="%230ea5e9" filter="blur(4px)" opacity="0.85"/><circle cx="360" cy="180" r="26" fill="%23ffffff"/><circle cx="230" cy="310" r="35" fill="%230284c7" filter="blur(3px)" opacity="0.9"/><circle cx="230" cy="310" r="20" fill="%23bae6fd"/><circle cx="470" cy="280" r="28" fill="%2338bdf8" filter="blur(2px)" opacity="0.85"/><circle cx="470" cy="280" r="18" fill="%23e0f2fe"/><circle cx="80" cy="250" r="24" fill="%230284c7" filter="blur(3px)" opacity="0.8"/><circle cx="80" cy="250" r="15" fill="%23bae6fd"/><text x="15" y="435" fill="%2394a3b8" font-family="sans-serif" font-size="12">CellScope Sample: DAPI Fluorescence Stain (600x450)</text></svg>';
 
 const INITIAL_USERS: StoredUser[] = [
   {
@@ -35,7 +42,19 @@ const INITIAL_EXPERIMENTS: Experiment[] = [
     sampleReference: 'HELA-2026-04A',
     description: 'Primary baseline scan of HeLa nuclear morphology under DAPI fluorescence.',
     isDemo: true,
-    files: [],
+    files: [
+      {
+        id: 101,
+        experimentId: 1,
+        filename: 'hela_dapi_sample.png',
+        fileType: 'image/png',
+        width: 600,
+        height: 450,
+        sizeBytes: 184500,
+        originalUrl: SAMPLE_FLUORESCENCE_IMAGE,
+        uploadedAt: new Date('2026-11-18T10:05:00Z').toISOString(),
+      },
+    ],
     createdAt: new Date('2026-11-18T10:00:00Z').toISOString(),
     updatedAt: new Date('2026-11-18T10:00:00Z').toISOString(),
   },
@@ -52,7 +71,6 @@ const INITIAL_EXPERIMENTS: Experiment[] = [
   },
 ];
 
-// In-memory fallback if localStorage is inaccessible
 const memoryFallback: Record<string, string> = {};
 
 function safeGet(key: string): string | null {
@@ -132,9 +150,71 @@ export const mockStorage = {
     safeSet(STORAGE_KEY_EXPERIMENTS, JSON.stringify(experiments));
   },
 
+  getRuns(): AnalysisRun[] {
+    const raw = safeGet(STORAGE_KEY_RUNS);
+    if (!raw) return [];
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  },
+
+  saveRuns(runs: AnalysisRun[]): void {
+    safeSet(STORAGE_KEY_RUNS, JSON.stringify(runs));
+  },
+
+  getMeasurements(): Record<number, CellMeasurement[]> {
+    const raw = safeGet(STORAGE_KEY_MEASUREMENTS);
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
+
+  saveMeasurements(map: Record<number, CellMeasurement[]>): void {
+    safeSet(STORAGE_KEY_MEASUREMENTS, JSON.stringify(map));
+  },
+
+  getQualityWarnings(): Record<number, QualityWarning[]> {
+    const raw = safeGet(STORAGE_KEY_QUALITY);
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
+
+  saveQualityWarnings(map: Record<number, QualityWarning[]>): void {
+    safeSet(STORAGE_KEY_QUALITY, JSON.stringify(map));
+  },
+
+  getImageDataMap(): Record<number, string> {
+    const raw = safeGet(STORAGE_KEY_IMAGE_DATA);
+    if (!raw) return { 101: SAMPLE_FLUORESCENCE_IMAGE };
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return { 101: SAMPLE_FLUORESCENCE_IMAGE };
+    }
+  },
+
+  saveImageData(fileId: number, dataUrl: string): void {
+    const map = this.getImageDataMap();
+    map[fileId] = dataUrl;
+    safeSet(STORAGE_KEY_IMAGE_DATA, JSON.stringify(map));
+  },
+
   reset(): void {
     safeRemove(STORAGE_KEY_USERS);
     safeRemove(STORAGE_KEY_AUTH);
     safeRemove(STORAGE_KEY_EXPERIMENTS);
+    safeRemove(STORAGE_KEY_RUNS);
+    safeRemove(STORAGE_KEY_MEASUREMENTS);
+    safeRemove(STORAGE_KEY_QUALITY);
+    safeRemove(STORAGE_KEY_IMAGE_DATA);
   },
 };
