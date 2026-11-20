@@ -20,6 +20,7 @@ export interface CellScopeApi {
   register(p: { name: string; email: string; password: string; role: Role }): Promise<AuthResponse>;
   login(p: { email: string; password: string }): Promise<AuthResponse>;
   me(): Promise<User>;
+  logout?(): Promise<void>;
 
   // experiments
   createExperiment(p: { title: string; description?: string; sampleReference?: string }): Promise<Experiment>;
