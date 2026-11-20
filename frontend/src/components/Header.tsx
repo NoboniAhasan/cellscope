@@ -32,12 +32,20 @@ export function Header() {
           {user && (
             <nav className="hidden md:flex items-center gap-1 pl-4 border-l border-slate-200">
               {user.role === 'researcher' ? (
-                <Link
-                  to="/dashboard"
-                  className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:text-teal-700 hover:bg-teal-50/70 rounded-md transition"
-                >
-                  Experiments
-                </Link>
+                <>
+                  <Link
+                    to="/dashboard"
+                    className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:text-teal-700 hover:bg-teal-50/70 rounded-md transition"
+                  >
+                    Experiments
+                  </Link>
+                  <Link
+                    to="/comparison"
+                    className="px-3 py-1.5 text-sm font-medium text-slate-700 hover:text-teal-700 hover:bg-teal-50/70 rounded-md transition"
+                  >
+                    Comparison
+                  </Link>
+                </>
               ) : (
                 <Link
                   to="/reviews"

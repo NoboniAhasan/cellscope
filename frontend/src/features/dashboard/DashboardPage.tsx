@@ -1,21 +1,25 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '../../services/api';
-import { Experiment } from '../../types';
+import { Experiment, ReviewStatus } from '../../types';
 import { Badge } from '../../components/Badge';
 import { Modal } from '../../components/Modal';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { CreateExperimentModal, CreateExperimentFormData } from './CreateExperimentModal';
 
+type SortOrder = 'newest' | 'oldest' | 'title';
+
 export function DashboardPage() {
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | ReviewStatus>('all');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [experimentToDelete, setExperimentToDelete] = useState<Experiment | null>(null);
 
   const {
-    data: experiments = [],
+    data: rawExperiments = [],
     isLoading,
     isError,
     error,
@@ -50,6 +54,29 @@ export function DashboardPage() {
     }
   };
 
+  // Filter and Sort Pipeline
+  const experiments = useMemo(() => {
+    let result = [...rawExperiments];
+
+    // Status Filter
+    if (statusFilter !== 'all') {
+      result = result.filter((e) => e.reviewStatus === statusFilter);
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      if (sortOrder === 'newest') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (sortOrder === 'oldest') {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      return a.title.localeCompare(b.title);
+    });
+
+    return result;
+  }, [rawExperiments, statusFilter, sortOrder]);
+
   return (
     <div className="space-y-6">
       {/* Page Title & Main Actions */}
@@ -57,21 +84,30 @@ export function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Researcher Dashboard</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Manage your microscopy experiments and segmentation runs
+            Manage microscopy experiments, audit history, and segmentation runs
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setIsCreateOpen(true)}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-medium text-sm rounded-lg shadow-sm transition"
-        >
-          <span className="text-lg leading-none">+</span>
-          <span>New Experiment</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/comparison"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-lg border border-slate-200 transition"
+          >
+            <span>⚖️ Compare Runs</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-medium text-sm rounded-lg shadow-sm transition"
+          >
+            <span className="text-lg leading-none">+</span>
+            <span>New Experiment</span>
+          </button>
+        </div>
       </div>
 
-      {/* Search & Filter Toolbar */}
-      <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+      {/* Search & History Filter Toolbar */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        {/* Search Input */}
         <div className="relative flex-1">
           <input
             type="text"
@@ -84,15 +120,38 @@ export function DashboardPage() {
             🔍
           </span>
         </div>
-        {searchTerm && (
-          <button
-            type="button"
-            onClick={() => setSearchTerm('')}
-            className="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 rounded transition"
-          >
-            Clear
-          </button>
-        )}
+
+        {/* Filters */}
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          {/* Status Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 font-semibold">Review Status:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            >
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending Review</option>
+              <option value="approved">Approved</option>
+              <option value="changes_requested">Changes Requested</option>
+            </select>
+          </div>
+
+          {/* Sort Order */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 font-semibold">Sort:</span>
+            <select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as any)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            >
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="title">Title (A-Z)</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Content States */}
@@ -122,14 +181,14 @@ export function DashboardPage() {
             🔬
           </div>
           <h2 className="text-base font-semibold text-slate-800">
-            {searchTerm ? 'No matching experiments found' : 'No experiments yet'}
+            {searchTerm || statusFilter !== 'all' ? 'No matching experiments found' : 'No experiments yet'}
           </h2>
           <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-5">
-            {searchTerm
-              ? `No experiments matched "${searchTerm}". Try a different keyword.`
+            {searchTerm || statusFilter !== 'all'
+              ? 'Try adjusting your search keywords or filter criteria.'
               : 'Create your first experiment to begin organizing microscopy image sets.'}
           </p>
-          {!searchTerm && (
+          {!searchTerm && statusFilter === 'all' && (
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
@@ -151,7 +210,22 @@ export function DashboardPage() {
                   <h2 className="font-semibold text-slate-900 text-base leading-snug line-clamp-2">
                     {exp.title}
                   </h2>
-                  {exp.isDemo && <Badge variant="demo">Demo result</Badge>}
+                  <div className="flex flex-col items-end gap-1">
+                    {exp.isDemo && <Badge variant="demo">Demo result</Badge>}
+                    {exp.reviewStatus && (
+                      <Badge
+                        variant={
+                          exp.reviewStatus === 'approved'
+                            ? 'success'
+                            : exp.reviewStatus === 'changes_requested'
+                            ? 'warning'
+                            : 'neutral'
+                        }
+                      >
+                        {exp.reviewStatus.replace('_', ' ')}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
                 {exp.sampleReference && (

@@ -876,16 +876,183 @@ export class MockAdapter implements CellScopeApi {
     return found;
   }
 
-  async exportAnnotatedImage(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportAnnotatedImage scheduled for Milestone M5');
+  async exportAnnotatedImage(runId: number): Promise<Blob> {
+    await delay(150);
+    const runs = mockStorage.getRuns();
+    const run = runs.find((r) => r.id === runId);
+    if (!run) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Analysis run not found.' };
+      throw err;
+    }
+
+    const measurementsMap = mockStorage.getMeasurements();
+    const measurements = measurementsMap[runId] || [];
+
+    // Create an annotated SVG representation as a PNG-compatible image blob
+    const width = 800;
+    const height = 600;
+    const polygonsSvg = measurements
+      .map((m) => {
+        const pts = m.contour.map((p) => p.join(',')).join(' ');
+        const color = m.source === 'added' ? '#10b981' : m.source === 'adjusted' ? '#f59e0b' : '#ef4444';
+        return `<polygon points="${pts}" fill="none" stroke="${color}" stroke-width="2" />`;
+      })
+      .join('\n');
+
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <rect width="${width}" height="${height}" fill="#0a0f1d"/>
+      <text x="20" y="30" fill="#94a3b8" font-family="sans-serif" font-size="14">CellScope Specimen Scan — Run v${run.version} (${measurements.length} candidate objects)</text>
+      ${polygonsSvg}
+      <rect x="20" y="${height - 40}" width="120" height="24" rx="4" fill="#fef3c7"/>
+      <text x="32" y="${height - 24}" fill="#92400e" font-family="sans-serif" font-weight="bold" font-size="11">DEMO RESULT</text>
+    </svg>`;
+
+    return new Blob([svgString], { type: 'image/svg+xml;charset=utf-8;' });
   }
 
-  async exportPdf(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportPdf scheduled for Milestone M5');
+  async exportPdf(runId: number): Promise<Blob> {
+    await delay(200);
+    const runs = mockStorage.getRuns();
+    const run = runs.find((r) => r.id === runId);
+    if (!run) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Analysis run not found.' };
+      throw err;
+    }
+
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === run.experimentId);
+    const measurementsMap = mockStorage.getMeasurements();
+    const measurements = measurementsMap[runId] || [];
+    const qualityMap = mockStorage.getQualityWarnings();
+    const warnings = qualityMap[runId] || [];
+
+    const totalCount = measurements.length;
+    const meanArea =
+      totalCount > 0 ? Math.round(measurements.reduce((acc, m) => acc + m.area, 0) / totalCount) : 0;
+    const meanPerimeter =
+      totalCount > 0
+        ? Math.round((measurements.reduce((acc, m) => acc + m.perimeter, 0) / totalCount) * 10) / 10
+        : 0;
+    const meanCircularity =
+      totalCount > 0
+        ? Math.round((measurements.reduce((acc, m) => acc + m.circularity, 0) / totalCount) * 1000) / 1000
+        : 0;
+
+    const reportHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>CellScope Report - ${exp?.title || 'Experiment'} v${run.version}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #1e293b; max-width: 800px; margin: 0 auto; }
+    .header { border-bottom: 2px solid #0d9488; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .title { font-size: 24px; font-weight: bold; color: #0f172a; }
+    .badge { background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .disclaimer { background: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #64748b; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+    .metric-value { font-size: 20px; font-weight: bold; color: #0f172a; margin-top: 4px; font-family: monospace; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px; }
+    th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; }
+    th { background: #f1f5f9; }
+    .footer { margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 16px; font-size: 11px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="title">CellScope Analysis Report</div>
+      <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Run Version v${run.version} (${run.kind})</div>
+    </div>
+    <span class="badge">DEMO RESULT</span>
+  </div>
+
+  <div class="disclaimer">
+    ⚠️ <strong>Notice:</strong> For educational/research use. Not for medical diagnosis.
+  </div>
+
+  <div class="card" style="margin-bottom: 20px;">
+    <strong>Experiment:</strong> ${exp?.title || 'Untitled'}<br/>
+    <strong>Sample Reference:</strong> ${exp?.sampleReference || 'None'}<br/>
+    <strong>Date Created:</strong> ${new Date(run.createdAt).toLocaleString()}<br/>
+    <strong>Algorithm:</strong> ${run.algorithmVersion}<br/>
+    <strong>Preset / Polarity:</strong> ${run.parameters.preset} / ${run.parameters.polarity}
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div style="font-size: 11px; text-transform: uppercase; color: #64748b;">Candidate Objects</div>
+      <div class="metric-value">${totalCount}</div>
+    </div>
+    <div class="card">
+      <div style="font-size: 11px; text-transform: uppercase; color: #64748b;">Mean Area (px²)</div>
+      <div class="metric-value">${meanArea} px²</div>
+    </div>
+    <div class="card">
+      <div style="font-size: 11px; text-transform: uppercase; color: #64748b;">Mean Perimeter</div>
+      <div class="metric-value">${meanPerimeter} px</div>
+    </div>
+    <div class="card">
+      <div style="font-size: 11px; text-transform: uppercase; color: #64748b;">Mean Circularity</div>
+      <div class="metric-value">${meanCircularity}</div>
+    </div>
+  </div>
+
+  ${
+    warnings.length > 0
+      ? `<h3>Quality Warnings</h3>
+  <table>
+    <tr><th>Code</th><th>Message</th><th>Suggestion</th></tr>
+    ${warnings.map((w) => `<tr><td>${w.code}</td><td>${w.message}</td><td>${w.suggestion}</td></tr>`).join('')}
+  </table>`
+      : ''
   }
 
-  async compareRuns(_runIds: number[]): Promise<RunComparison> {
-    throw new Error('MockAdapter: compareRuns scheduled for Milestone M5');
+  <div class="footer">
+    Generated by CellScope Microscopy Research Platform — Educational Software Engineering Lab
+  </div>
+</body>
+</html>`;
+
+    return new Blob([reportHtml], { type: 'application/pdf;charset=utf-8;' });
+  }
+
+  async compareRuns(runIds: number[]): Promise<RunComparison> {
+    await delay(200);
+    const runs = mockStorage.getRuns();
+    const experiments = mockStorage.getExperiments();
+    const measurementsMap = mockStorage.getMeasurements();
+
+    const comparisonRuns = runIds
+      .map((id) => {
+        const run = runs.find((r) => r.id === id);
+        if (!run) return null;
+
+        const exp = experiments.find((e) => e.id === run.experimentId);
+        const measurements = measurementsMap[id] || [];
+        const count = measurements.length;
+
+        const meanArea =
+          count > 0 ? Math.round(measurements.reduce((acc, m) => acc + m.area, 0) / count) : 0;
+        const meanPerimeter =
+          count > 0 ? Math.round((measurements.reduce((acc, m) => acc + m.perimeter, 0) / count) * 10) / 10 : 0;
+        const meanCircularity =
+          count > 0
+            ? Math.round((measurements.reduce((acc, m) => acc + m.circularity, 0) / count) * 1000) / 1000
+            : 0;
+
+        return {
+          runId: run.id,
+          label: `${exp?.title || 'Experiment'} (v${run.version})`,
+          objectCount: count,
+          meanArea,
+          meanPerimeter,
+          meanCircularity,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    return { runs: comparisonRuns };
   }
 
   // assistant (Gemini Guide)

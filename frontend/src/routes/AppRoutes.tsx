@@ -4,6 +4,7 @@ import { LoginPage } from '../features/auth/LoginPage';
 import { RegisterPage } from '../features/auth/RegisterPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { ExperimentDetailPage } from '../features/experiments/ExperimentDetailPage';
+import { ComparisonPage } from '../features/comparison/ComparisonPage';
 import { AssignedReviewsPage } from '../features/reviews/AssignedReviewsPage';
 import { ReviewDetailPage } from '../features/reviews/ReviewDetailPage';
 import { Layout } from '../components/Layout';
@@ -48,6 +49,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['researcher']}>
               <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/comparison"
+          element={
+            <ProtectedRoute allowedRoles={['researcher']}>
+              <ComparisonPage />
             </ProtectedRoute>
           }
         />

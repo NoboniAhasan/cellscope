@@ -222,6 +222,30 @@ export function ExperimentDetailPage() {
     window.URL.revokeObjectURL(url);
   };
 
+  // Annotated Image Export Handler
+  const handleExportImage = async () => {
+    if (!activeRun) return;
+    const blob = await api.exportAnnotatedImage(activeRun.id);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cellscope_exp${experimentId}_v${activeRun.version}_annotated.png`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  // PDF Report Export Handler
+  const handleExportPdf = async () => {
+    if (!activeRun) return;
+    const blob = await api.exportPdf(activeRun.id);
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cellscope_exp${experimentId}_v${activeRun.version}_report.html`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   const filteredMeasurements = useMemo(() => {
     return localMeasurements.filter((m) => m.area >= minAreaDisplayFilter);
   }, [localMeasurements, minAreaDisplayFilter]);
@@ -269,7 +293,7 @@ export function ExperimentDetailPage() {
         </Link>
 
         {activeRun && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="demo">Demo result</Badge>
             <button
               type="button"
@@ -280,10 +304,26 @@ export function ExperimentDetailPage() {
             </button>
             <button
               type="button"
+              onClick={handleExportImage}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-medium transition flex items-center gap-1.5 border border-slate-300"
+              title="Download Annotated Image (PNG)"
+            >
+              <span>🖼️ Image PNG</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-medium transition flex items-center gap-1.5 border border-slate-300"
+              title="Download PDF/HTML Summary Report"
+            >
+              <span>📄 PDF Report</span>
+            </button>
+            <button
+              type="button"
               onClick={handleExportCsv}
               className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
             >
-              <span>📥 Export CSV (v{activeRun.version})</span>
+              <span>📥 CSV (v{activeRun.version})</span>
             </button>
           </div>
         )}
