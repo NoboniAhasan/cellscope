@@ -2,15 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Image as KonvaImage, Line, Rect, Circle } from 'react-konva';
 import { CellMeasurement } from '../../types';
 
+export type CanvasViewMode = 'outlines' | 'mask' | 'raw';
+export type CanvasEditMode = 'inspect' | 'add' | 'adjust';
+
 interface AnalysisCanvasProps {
   imageUrl: string;
   measurements: CellMeasurement[];
   selectedObjectId: number | null;
   onSelectObject: (id: number | null) => void;
   filteredMeasurements: CellMeasurement[];
+  editMode?: CanvasEditMode;
+  onAddObject?: (contour: Array<[number, number]>) => void;
+  onAdjustContour?: (id: number, newContour: Array<[number, number]>) => void;
 }
-
-export type CanvasViewMode = 'outlines' | 'mask' | 'raw';
 
 export function AnalysisCanvas({
   imageUrl,
@@ -18,6 +22,9 @@ export function AnalysisCanvas({
   selectedObjectId,
   onSelectObject,
   filteredMeasurements,
+  editMode = 'inspect',
+  onAddObject,
+  onAdjustContour,
 }: AnalysisCanvasProps) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [viewMode, setViewMode] = useState<CanvasViewMode>('outlines');
@@ -26,14 +33,12 @@ export function AnalysisCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 700, height: 480 });
 
-  // Load image
   useEffect(() => {
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.src = imageUrl;
     img.onload = () => {
       setImage(img);
-      // Auto-fit image to container
       if (containerRef.current) {
         const cw = containerRef.current.clientWidth || 700;
         const scale = Math.min(cw / (img.width || 600), 480 / (img.height || 450), 1);
@@ -42,7 +47,6 @@ export function AnalysisCanvas({
     };
   }, [imageUrl]);
 
-  // Track container resize
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
@@ -82,24 +86,52 @@ export function AnalysisCanvas({
     setStagePosition({ x: 0, y: 0 });
   };
 
-  // Convert polygon coordinates [x, y] to flat array [x0, y0, x1, y1...] for Konva Line
   const toFlatPoints = (contour: Array<[number, number]>): number[] => {
     return contour.flatMap(([x, y]) => [x, y]);
   };
+
+  // Click on stage: handle adding missed object when editMode === 'add'
+  const handleStageClick = (e: any) => {
+    const stage = e.target.getStage();
+    if (!stage) return;
+
+    if (editMode === 'add' && onAddObject) {
+      const pos = stage.getPointerPosition();
+      const clickX = (pos.x - stagePosition.x) / stageScale;
+      const clickY = (pos.y - stagePosition.y) / stageScale;
+
+      // Generate a circular 16-point polygon around click point
+      const radius = 22;
+      const newContour: Array<[number, number]> = [];
+      const numPoints = 16;
+      for (let i = 0; i < numPoints; i++) {
+        const theta = (i * 2 * Math.PI) / numPoints;
+        const px = clickX + radius * Math.cos(theta);
+        const py = clickY + radius * Math.sin(theta);
+        newContour.push([Math.round(px * 10) / 10, Math.round(py * 10) / 10]);
+      }
+      onAddObject(newContour);
+      return;
+    }
+
+    // Otherwise, clicking empty space deselects
+    if (e.target === stage) {
+      onSelectObject(null);
+    }
+  };
+
+  const selectedMeasurement = measurements.find((m) => m.id === selectedObjectId);
 
   return (
     <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-sm border border-slate-800 flex flex-col">
       {/* Canvas Toolbar */}
       <div className="bg-slate-950/80 px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
-        {/* Mode Toggles */}
         <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
           <button
             type="button"
             onClick={() => setViewMode('outlines')}
             className={`px-3 py-1 rounded-md font-medium transition ${
-              viewMode === 'outlines'
-                ? 'bg-teal-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
+              viewMode === 'outlines' ? 'bg-teal-600 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Candidate Outlines
@@ -108,9 +140,7 @@ export function AnalysisCanvas({
             type="button"
             onClick={() => setViewMode('mask')}
             className={`px-3 py-1 rounded-md font-medium transition ${
-              viewMode === 'mask'
-                ? 'bg-teal-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
+              viewMode === 'mask' ? 'bg-teal-600 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Binary Mask
@@ -119,16 +149,13 @@ export function AnalysisCanvas({
             type="button"
             onClick={() => setViewMode('raw')}
             className={`px-3 py-1 rounded-md font-medium transition ${
-              viewMode === 'raw'
-                ? 'bg-teal-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
+              viewMode === 'raw' ? 'bg-teal-600 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Raw Specimen
           </button>
         </div>
 
-        {/* Zoom & Pan Controls */}
         <div className="flex items-center gap-2">
           <span className="font-mono text-slate-400 text-[11px]">
             {Math.round(stageScale * 100)}%
@@ -162,26 +189,26 @@ export function AnalysisCanvas({
       {/* Interactive Stage */}
       <div
         ref={containerRef}
-        className="w-full h-[480px] bg-slate-950 cursor-grab active:cursor-grabbing overflow-hidden flex items-center justify-center relative"
+        className={`w-full h-[480px] bg-slate-950 overflow-hidden flex items-center justify-center relative ${
+          editMode === 'add' ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'
+        }`}
       >
         <Stage
           width={containerSize.width}
           height={containerSize.height}
           onWheel={handleWheel}
-          draggable
+          draggable={editMode !== 'add'}
           scaleX={stageScale}
           scaleY={stageScale}
           x={stagePosition.x}
           y={stagePosition.y}
-          onDragEnd={(e) => setStagePosition({ x: e.target.x(), y: e.target.y() })}
-          onClick={(e) => {
-            // Clicking empty canvas space deselects
+          onDragEnd={(e) => {
             if (e.target === e.target.getStage()) {
-              onSelectObject(null);
+              setStagePosition({ x: e.target.x(), y: e.target.y() });
             }
           }}
+          onClick={handleStageClick}
         >
-          {/* Layer 1: Image Background or Mask canvas */}
           <Layer>
             {viewMode === 'mask' ? (
               <Rect
@@ -195,11 +222,15 @@ export function AnalysisCanvas({
               image && <KonvaImage image={image} x={0} y={0} />
             )}
 
-            {/* Layer 2: Outlines / Mask Shapes */}
             {viewMode !== 'raw' &&
               filteredMeasurements.map((m) => {
                 const isSelected = selectedObjectId === m.id;
                 const points = toFlatPoints(m.contour);
+
+                let strokeColor = '#ef4444'; // default automated
+                if (m.source === 'added') strokeColor = '#10b981';
+                else if (m.source === 'adjusted') strokeColor = '#f59e0b';
+                if (isSelected) strokeColor = '#06b6d4';
 
                 if (viewMode === 'mask') {
                   return (
@@ -220,62 +251,100 @@ export function AnalysisCanvas({
                     key={`outline-${m.id}`}
                     points={points}
                     closed
-                    stroke={isSelected ? '#06b6d4' : '#ef4444'}
+                    stroke={strokeColor}
                     strokeWidth={isSelected ? 2.5 : 1.5}
                     fill={isSelected ? 'rgba(6, 182, 212, 0.25)' : 'transparent'}
                     shadowColor={isSelected ? '#06b6d4' : undefined}
                     shadowBlur={isSelected ? 10 : 0}
                     onClick={() => onSelectObject(m.id)}
                     onMouseEnter={(e) => {
-                      const container = e.target.getStage()?.container();
-                      if (container) container.style.cursor = 'pointer';
+                      if (editMode !== 'add') {
+                        const container = e.target.getStage()?.container();
+                        if (container) container.style.cursor = 'pointer';
+                      }
                     }}
                     onMouseLeave={(e) => {
-                      const container = e.target.getStage()?.container();
-                      if (container) container.style.cursor = 'default';
+                      if (editMode !== 'add') {
+                        const container = e.target.getStage()?.container();
+                        if (container) container.style.cursor = 'default';
+                      }
                     }}
                   />
                 );
               })}
 
-            {/* Selected Object Indicator (Centroid & Bounding Box) */}
-            {selectedObjectId && (
-              (() => {
-                const selected = measurements.find((m) => m.id === selectedObjectId);
-                if (!selected || viewMode === 'raw') return null;
-                return (
-                  <>
-                    <Rect
-                      x={selected.bbox.x}
-                      y={selected.bbox.y}
-                      width={selected.bbox.width}
-                      height={selected.bbox.height}
-                      stroke="#06b6d4"
-                      strokeWidth={1}
-                      dash={[4, 4]}
-                    />
+            {/* Selected Object Indicator */}
+            {selectedMeasurement && viewMode !== 'raw' && (
+              <>
+                <Rect
+                  x={selectedMeasurement.bbox.x}
+                  y={selectedMeasurement.bbox.y}
+                  width={selectedMeasurement.bbox.width}
+                  height={selectedMeasurement.bbox.height}
+                  stroke="#06b6d4"
+                  strokeWidth={1}
+                  dash={[4, 4]}
+                />
+                <Circle
+                  x={selectedMeasurement.centroid.x}
+                  y={selectedMeasurement.centroid.y}
+                  radius={3}
+                  fill="#06b6d4"
+                />
+
+                {/* Vertex Adjustment Anchor Handles (when in 'adjust' mode) */}
+                {editMode === 'adjust' &&
+                  selectedMeasurement.contour.map(([vx, vy], idx) => (
                     <Circle
-                      x={selected.centroid.x}
-                      y={selected.centroid.y}
-                      radius={3}
+                      key={`vertex-${idx}`}
+                      x={vx}
+                      y={vy}
+                      radius={4.5}
                       fill="#06b6d4"
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                      draggable
+                      onDragMove={(e) => {
+                        if (onAdjustContour) {
+                          const updatedContour = selectedMeasurement.contour.map((pt, i) =>
+                            i === idx
+                              ? ([Math.round(e.target.x() * 10) / 10, Math.round(e.target.y() * 10) / 10] as [
+                                  number,
+                                  number,
+                                ])
+                              : pt,
+                          );
+                          onAdjustContour(selectedMeasurement.id, updatedContour);
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) container.style.cursor = 'move';
+                      }}
+                      onMouseLeave={(e) => {
+                        const container = e.target.getStage()?.container();
+                        if (container) container.style.cursor = 'default';
+                      }}
                     />
-                  </>
-                );
-              })()
+                  ))}
+              </>
             )}
           </Layer>
         </Stage>
 
-        {/* Canvas Overlay Legend */}
-        <div className="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-slate-800 text-[11px] text-slate-300 flex items-center gap-3">
+        {/* Legend */}
+        <div className="absolute bottom-3 left-3 bg-slate-900/85 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-800 text-[11px] text-slate-300 flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
-            <span>Candidate Outlines</span>
+            <span className="w-2 h-2 rounded-full bg-red-500" />
+            <span>Automated</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-            <span>Selected Object</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span>Added</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+            <span>Adjusted</span>
           </div>
         </div>
       </div>

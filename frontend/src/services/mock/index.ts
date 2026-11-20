@@ -15,7 +15,14 @@ import {
   User,
 } from '../../types';
 import type { CellScopeApi } from '../api';
-import { generateMockDetections } from './detector';
+import {
+  calculateBoundingBox,
+  calculateCentroid,
+  calculateCircularity,
+  calculatePerimeter,
+  calculateShoelaceArea,
+  generateMockDetections,
+} from './detector';
 import { mockStorage, StoredUser } from './storage';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,7 +30,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class MockAdapter implements CellScopeApi {
   // auth
   async register(p: { name: string; email: string; password: string; role: Role }): Promise<AuthResponse> {
-    await delay(300);
+    await delay(200);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -68,7 +75,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async login(p: { email: string; password: string }): Promise<AuthResponse> {
-    await delay(300);
+    await delay(200);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -123,7 +130,7 @@ export class MockAdapter implements CellScopeApi {
 
   // experiments
   async createExperiment(p: { title: string; description?: string; sampleReference?: string }): Promise<Experiment> {
-    await delay(200);
+    await delay(150);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'You must be logged in to create experiments.' };
@@ -157,7 +164,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async listExperiments(p?: { search?: string }): Promise<Experiment[]> {
-    await delay(150);
+    await delay(100);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
@@ -186,7 +193,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async getExperiment(id: number): Promise<Experiment> {
-    await delay(150);
+    await delay(100);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
@@ -217,7 +224,7 @@ export class MockAdapter implements CellScopeApi {
     id: number,
     p: Partial<Pick<Experiment, 'title' | 'description' | 'sampleReference'>>,
   ): Promise<Experiment> {
-    await delay(150);
+    await delay(100);
     const experiments = mockStorage.getExperiments();
     const idx = experiments.findIndex((e) => e.id === id);
     if (idx === -1) {
@@ -240,14 +247,14 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async deleteExperiment(id: number): Promise<void> {
-    await delay(150);
+    await delay(100);
     const experiments = mockStorage.getExperiments();
     const filtered = experiments.filter((e) => e.id !== id);
     mockStorage.saveExperiments(filtered);
   }
 
   async uploadImage(experimentId: number, file: File): Promise<ExperimentFile> {
-    await delay(350);
+    await delay(250);
     const experiments = mockStorage.getExperiments();
     const exp = experiments.find((e) => e.id === experimentId);
     if (!exp) {
@@ -255,7 +262,6 @@ export class MockAdapter implements CellScopeApi {
       throw err;
     }
 
-    // Validate size (max 20 MB)
     const MAX_SIZE = 20 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       const err: ApiError = {
@@ -266,7 +272,6 @@ export class MockAdapter implements CellScopeApi {
       throw err;
     }
 
-    // Validate mime/extension
     const validExtensions = ['.png', '.jpg', '.jpeg', '.tif', '.tiff'];
     const lowerName = file.name.toLowerCase();
     const hasValidExt = validExtensions.some((ext) => lowerName.endsWith(ext));
@@ -282,7 +287,6 @@ export class MockAdapter implements CellScopeApi {
       throw err;
     }
 
-    // Read file as data URL
     const dataUrl: string = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
@@ -290,7 +294,6 @@ export class MockAdapter implements CellScopeApi {
       reader.readAsDataURL(file);
     });
 
-    // Obtain intrinsic dimensions
     const dimensions: { width: number; height: number } = await new Promise((resolve) => {
       if (typeof Image === 'undefined') {
         resolve({ width: 800, height: 600 });
@@ -323,9 +326,8 @@ export class MockAdapter implements CellScopeApi {
     return newFile;
   }
 
-  // Pre-run quality assessment
   async assessQuality(p: { experimentId: number; fileId: number }): Promise<QualityWarning[]> {
-    await delay(200);
+    await delay(100);
     const experiments = mockStorage.getExperiments();
     const exp = experiments.find((e) => e.id === p.experimentId);
     const file = exp?.files.find((f) => f.id === p.fileId);
@@ -333,7 +335,6 @@ export class MockAdapter implements CellScopeApi {
     const warnings: QualityWarning[] = [];
     if (!file) return warnings;
 
-    // Check image dimensions
     if (file.width >= 4000 || file.height >= 4000) {
       warnings.push({
         code: 'VERY_LARGE_IMAGE',
@@ -343,7 +344,6 @@ export class MockAdapter implements CellScopeApi {
       });
     }
 
-    // Informational notice on presets
     if (file.filename.toLowerCase().includes('fluor') || file.filename.toLowerCase().includes('dapi')) {
       warnings.push({
         code: 'LOW_CONTRAST',
@@ -356,14 +356,12 @@ export class MockAdapter implements CellScopeApi {
     return warnings;
   }
 
-  // analysis
   async runAnalysis(p: {
     experimentId: number;
     fileId: number;
     parameters: AnalysisParameters;
   }): Promise<AnalysisRun> {
-    // Realistic simulation latency: 1500ms
-    await delay(1500);
+    await delay(800);
 
     const auth = mockStorage.getAuth();
     if (!auth) {
@@ -387,7 +385,6 @@ export class MockAdapter implements CellScopeApi {
     const runs = mockStorage.getRuns();
     const nextRunId = runs.length > 0 ? Math.max(...runs.map((r) => r.id)) + 1 : 1;
 
-    // Generate mock candidate detections & metrics
     const { measurements, warnings, maskDataUrl } = generateMockDetections(
       file.width,
       file.height,
@@ -409,13 +406,12 @@ export class MockAdapter implements CellScopeApi {
       maskUrl: maskDataUrl,
       createdAt: new Date().toISOString(),
       createdBy: auth.user.id,
-      isDemo: true, // Always true for mock results per honesty rules
+      isDemo: true,
     };
 
     runs.unshift(newRun);
     mockStorage.saveRuns(runs);
 
-    // Persist measurements and quality warnings
     const measurementsMap = mockStorage.getMeasurements();
     measurementsMap[nextRunId] = measurements;
     mockStorage.saveMeasurements(measurementsMap);
@@ -424,7 +420,6 @@ export class MockAdapter implements CellScopeApi {
     qualityMap[nextRunId] = warnings;
     mockStorage.saveQualityWarnings(qualityMap);
 
-    // Update experiment latestRunId
     exp.latestRunId = nextRunId;
     mockStorage.saveExperiments(experiments);
 
@@ -432,7 +427,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async getAnalysis(id: number): Promise<AnalysisRun> {
-    await delay(150);
+    await delay(100);
     const runs = mockStorage.getRuns();
     const run = runs.find((r) => r.id === id);
     if (!run) {
@@ -443,7 +438,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async listRuns(experimentId: number): Promise<AnalysisRun[]> {
-    await delay(150);
+    await delay(100);
     const runs = mockStorage.getRuns();
     return runs
       .filter((r) => r.experimentId === experimentId)
@@ -451,19 +446,19 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async getMeasurements(runId: number): Promise<CellMeasurement[]> {
-    await delay(150);
+    await delay(100);
     const measurementsMap = mockStorage.getMeasurements();
     return measurementsMap[runId] || [];
   }
 
   async getQuality(runId: number): Promise<QualityWarning[]> {
-    await delay(150);
+    await delay(100);
     const qualityMap = mockStorage.getQualityWarnings();
     return qualityMap[runId] || [];
   }
 
   async exportCsv(runId: number): Promise<Blob> {
-    await delay(200);
+    await delay(150);
     const measurementsMap = mockStorage.getMeasurements();
     const items = measurementsMap[runId] || [];
 
@@ -499,22 +494,145 @@ export class MockAdapter implements CellScopeApi {
     return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   }
 
-  async exportAnnotatedImage(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportAnnotatedImage scheduled for Milestone M5');
-  }
-
-  async exportPdf(_runId: number): Promise<Blob> {
-    throw new Error('MockAdapter: exportPdf scheduled for Milestone M5');
-  }
-
-  async saveCorrection(_p: {
+  /**
+   * Milestone M3: Saves corrections as a NEW immutable version (N+1).
+   * Leaves the parent run and its measurements completely untouched.
+   */
+  async saveCorrection(p: {
     parentRunId: number;
     deleteObjectIds: number[];
     addObjects: Array<Pick<CellMeasurement, 'contour'>>;
     adjusted: Array<{ objectId: number; contour: Array<[number, number]> }>;
     changeNote?: string;
   }): Promise<AnalysisRun> {
-    throw new Error('MockAdapter: saveCorrection scheduled for Milestone M3');
+    await delay(400);
+
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const runs = mockStorage.getRuns();
+    const parentRun = runs.find((r) => r.id === p.parentRunId);
+    if (!parentRun) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Parent analysis run not found.' };
+      throw err;
+    }
+
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === parentRun.experimentId);
+    if (!exp) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Experiment not found.' };
+      throw err;
+    }
+
+    const measurementsMap = mockStorage.getMeasurements();
+    const parentMeasurements = measurementsMap[p.parentRunId] || [];
+
+    // Clone parent measurements so parent remains completely untouched
+    let updatedMeasurements: CellMeasurement[] = parentMeasurements.map((m) => ({
+      ...m,
+      centroid: { ...m.centroid },
+      bbox: { ...m.bbox },
+      contour: m.contour.map((pt) => [pt[0], pt[1]] as [number, number]),
+    }));
+
+    // 1. Delete objects
+    if (p.deleteObjectIds.length > 0) {
+      const deleteSet = new Set(p.deleteObjectIds);
+      updatedMeasurements = updatedMeasurements.filter((m) => !deleteSet.has(m.id));
+    }
+
+    // 2. Adjust objects
+    for (const adj of p.adjusted) {
+      const target = updatedMeasurements.find((m) => m.id === adj.objectId);
+      if (target) {
+        target.contour = adj.contour;
+        target.area = Math.round(calculateShoelaceArea(adj.contour));
+        target.perimeter = Math.round(calculatePerimeter(adj.contour) * 10) / 10;
+        target.circularity = calculateCircularity(target.area, target.perimeter);
+        target.centroid = calculateCentroid(adj.contour);
+        target.bbox = calculateBoundingBox(adj.contour);
+        target.source = 'adjusted';
+      }
+    }
+
+    // 3. Add objects
+    let maxId = updatedMeasurements.length > 0 ? Math.max(...updatedMeasurements.map((m) => m.id)) : 0;
+    const nextRunId = runs.length > 0 ? Math.max(...runs.map((r) => r.id)) + 1 : 1;
+
+    for (const add of p.addObjects) {
+      maxId++;
+      const area = Math.round(calculateShoelaceArea(add.contour));
+      const perimeter = Math.round(calculatePerimeter(add.contour) * 10) / 10;
+      const circularity = calculateCircularity(area, perimeter);
+      const centroid = calculateCentroid(add.contour);
+      const bbox = calculateBoundingBox(add.contour);
+
+      updatedMeasurements.push({
+        id: maxId,
+        runId: nextRunId,
+        area,
+        perimeter,
+        circularity,
+        centroid,
+        bbox,
+        contour: add.contour,
+        source: 'added',
+      });
+    }
+
+    // Update runId on all measurements in this new run
+    updatedMeasurements = updatedMeasurements.map((m) => ({ ...m, runId: nextRunId }));
+
+    // Create the new corrected version (parentVersion + 1)
+    const nextVersion = parentRun.version + 1;
+    const newRun: AnalysisRun = {
+      id: nextRunId,
+      experimentId: parentRun.experimentId,
+      fileId: parentRun.fileId,
+      version: nextVersion,
+      parentRunId: parentRun.id,
+      kind: 'corrected',
+      status: 'completed',
+      parameters: { ...parentRun.parameters },
+      algorithmVersion: parentRun.algorithmVersion,
+      objectCount: updatedMeasurements.length,
+      annotatedImageUrl: parentRun.annotatedImageUrl,
+      maskUrl: parentRun.maskUrl,
+      createdAt: new Date().toISOString(),
+      createdBy: auth.user.id,
+      changeNote: p.changeNote?.trim() || undefined,
+      isDemo: true,
+    };
+
+    runs.unshift(newRun);
+    mockStorage.saveRuns(runs);
+
+    // Save new measurements
+    measurementsMap[nextRunId] = updatedMeasurements;
+    mockStorage.saveMeasurements(measurementsMap);
+
+    // Copy forward quality warnings or calculate post-correction warnings
+    const qualityMap = mockStorage.getQualityWarnings();
+    const parentWarnings = qualityMap[p.parentRunId] || [];
+    qualityMap[nextRunId] = [...parentWarnings];
+    mockStorage.saveQualityWarnings(qualityMap);
+
+    // Set latestRunId on experiment
+    exp.latestRunId = nextRunId;
+    mockStorage.saveExperiments(experiments);
+
+    return newRun;
+  }
+
+  async exportAnnotatedImage(_runId: number): Promise<Blob> {
+    throw new Error('MockAdapter: exportAnnotatedImage scheduled for Milestone M5');
+  }
+
+  async exportPdf(_runId: number): Promise<Blob> {
+    throw new Error('MockAdapter: exportPdf scheduled for Milestone M5');
   }
 
   async compareRuns(_runIds: number[]): Promise<RunComparison> {
