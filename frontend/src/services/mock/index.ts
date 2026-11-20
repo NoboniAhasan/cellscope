@@ -30,7 +30,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class MockAdapter implements CellScopeApi {
   // auth
   async register(p: { name: string; email: string; password: string; role: Role }): Promise<AuthResponse> {
-    await delay(200);
+    await delay(150);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -75,7 +75,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async login(p: { email: string; password: string }): Promise<AuthResponse> {
-    await delay(200);
+    await delay(150);
     const users = mockStorage.getUsers();
     const normalizedEmail = p.email.trim().toLowerCase();
 
@@ -130,7 +130,7 @@ export class MockAdapter implements CellScopeApi {
 
   // experiments
   async createExperiment(p: { title: string; description?: string; sampleReference?: string }): Promise<Experiment> {
-    await delay(150);
+    await delay(100);
     const auth = mockStorage.getAuth();
     if (!auth) {
       const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'You must be logged in to create experiments.' };
@@ -173,8 +173,11 @@ export class MockAdapter implements CellScopeApi {
 
     let experiments = mockStorage.getExperiments();
 
+    // Reviewer role rule: reviewers only see experiments assigned to them
     if (auth.user.role === 'reviewer') {
-      return [];
+      const reviews = mockStorage.getReviews().filter((r) => r.reviewerId === auth.user.id);
+      const assignedExpIds = new Set(reviews.map((r) => r.experimentId));
+      experiments = experiments.filter((e) => assignedExpIds.has(e.id));
     }
 
     if (p?.search && p.search.trim() !== '') {
@@ -209,12 +212,16 @@ export class MockAdapter implements CellScopeApi {
     }
 
     if (auth.user.role === 'reviewer') {
-      const err: ApiError = {
-        status: 403,
-        code: 'FORBIDDEN',
-        message: 'You do not have permission to view this experiment.',
-      };
-      throw err;
+      const reviews = mockStorage.getReviews();
+      const isAssigned = reviews.some((r) => r.experimentId === id && r.reviewerId === auth.user.id);
+      if (!isAssigned) {
+        const err: ApiError = {
+          status: 403,
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to view this experiment (unassigned).',
+        };
+        throw err;
+      }
     }
 
     return exp;
@@ -254,7 +261,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async uploadImage(experimentId: number, file: File): Promise<ExperimentFile> {
-    await delay(250);
+    await delay(200);
     const experiments = mockStorage.getExperiments();
     const exp = experiments.find((e) => e.id === experimentId);
     if (!exp) {
@@ -361,7 +368,7 @@ export class MockAdapter implements CellScopeApi {
     fileId: number;
     parameters: AnalysisParameters;
   }): Promise<AnalysisRun> {
-    await delay(800);
+    await delay(500);
 
     const auth = mockStorage.getAuth();
     if (!auth) {
@@ -427,7 +434,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async getAnalysis(id: number): Promise<AnalysisRun> {
-    await delay(100);
+    await delay(50);
     const runs = mockStorage.getRuns();
     const run = runs.find((r) => r.id === id);
     if (!run) {
@@ -438,7 +445,7 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async listRuns(experimentId: number): Promise<AnalysisRun[]> {
-    await delay(100);
+    await delay(50);
     const runs = mockStorage.getRuns();
     return runs
       .filter((r) => r.experimentId === experimentId)
@@ -446,19 +453,19 @@ export class MockAdapter implements CellScopeApi {
   }
 
   async getMeasurements(runId: number): Promise<CellMeasurement[]> {
-    await delay(100);
+    await delay(50);
     const measurementsMap = mockStorage.getMeasurements();
     return measurementsMap[runId] || [];
   }
 
   async getQuality(runId: number): Promise<QualityWarning[]> {
-    await delay(100);
+    await delay(50);
     const qualityMap = mockStorage.getQualityWarnings();
     return qualityMap[runId] || [];
   }
 
   async exportCsv(runId: number): Promise<Blob> {
-    await delay(150);
+    await delay(100);
     const measurementsMap = mockStorage.getMeasurements();
     const items = measurementsMap[runId] || [];
 
@@ -494,10 +501,6 @@ export class MockAdapter implements CellScopeApi {
     return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   }
 
-  /**
-   * Milestone M3: Saves corrections as a NEW immutable version (N+1).
-   * Leaves the parent run and its measurements completely untouched.
-   */
   async saveCorrection(p: {
     parentRunId: number;
     deleteObjectIds: number[];
@@ -505,7 +508,7 @@ export class MockAdapter implements CellScopeApi {
     adjusted: Array<{ objectId: number; contour: Array<[number, number]> }>;
     changeNote?: string;
   }): Promise<AnalysisRun> {
-    await delay(400);
+    await delay(250);
 
     const auth = mockStorage.getAuth();
     if (!auth) {
@@ -530,7 +533,6 @@ export class MockAdapter implements CellScopeApi {
     const measurementsMap = mockStorage.getMeasurements();
     const parentMeasurements = measurementsMap[p.parentRunId] || [];
 
-    // Clone parent measurements so parent remains completely untouched
     let updatedMeasurements: CellMeasurement[] = parentMeasurements.map((m) => ({
       ...m,
       centroid: { ...m.centroid },
@@ -538,13 +540,11 @@ export class MockAdapter implements CellScopeApi {
       contour: m.contour.map((pt) => [pt[0], pt[1]] as [number, number]),
     }));
 
-    // 1. Delete objects
     if (p.deleteObjectIds.length > 0) {
       const deleteSet = new Set(p.deleteObjectIds);
       updatedMeasurements = updatedMeasurements.filter((m) => !deleteSet.has(m.id));
     }
 
-    // 2. Adjust objects
     for (const adj of p.adjusted) {
       const target = updatedMeasurements.find((m) => m.id === adj.objectId);
       if (target) {
@@ -558,7 +558,6 @@ export class MockAdapter implements CellScopeApi {
       }
     }
 
-    // 3. Add objects
     let maxId = updatedMeasurements.length > 0 ? Math.max(...updatedMeasurements.map((m) => m.id)) : 0;
     const nextRunId = runs.length > 0 ? Math.max(...runs.map((r) => r.id)) + 1 : 1;
 
@@ -583,11 +582,9 @@ export class MockAdapter implements CellScopeApi {
       });
     }
 
-    // Update runId on all measurements in this new run
     updatedMeasurements = updatedMeasurements.map((m) => ({ ...m, runId: nextRunId }));
-
-    // Create the new corrected version (parentVersion + 1)
     const nextVersion = parentRun.version + 1;
+
     const newRun: AnalysisRun = {
       id: nextRunId,
       experimentId: parentRun.experimentId,
@@ -610,21 +607,273 @@ export class MockAdapter implements CellScopeApi {
     runs.unshift(newRun);
     mockStorage.saveRuns(runs);
 
-    // Save new measurements
     measurementsMap[nextRunId] = updatedMeasurements;
     mockStorage.saveMeasurements(measurementsMap);
 
-    // Copy forward quality warnings or calculate post-correction warnings
     const qualityMap = mockStorage.getQualityWarnings();
     const parentWarnings = qualityMap[p.parentRunId] || [];
     qualityMap[nextRunId] = [...parentWarnings];
     mockStorage.saveQualityWarnings(qualityMap);
 
-    // Set latestRunId on experiment
     exp.latestRunId = nextRunId;
     mockStorage.saveExperiments(experiments);
 
     return newRun;
+  }
+
+  // Milestone M4: Review System Endpoints
+  async sendForReview(p: { runId: number; reviewerEmail: string }): Promise<ReviewAssignment> {
+    await delay(200);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const runs = mockStorage.getRuns();
+    const run = runs.find((r) => r.id === p.runId);
+    if (!run) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Analysis run not found.' };
+      throw err;
+    }
+
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === run.experimentId);
+    if (!exp) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Experiment not found.' };
+      throw err;
+    }
+
+    const users = mockStorage.getUsers();
+    const reviewer = users.find(
+      (u) => u.email.toLowerCase() === p.reviewerEmail.trim().toLowerCase() && u.role === 'reviewer',
+    );
+    if (!reviewer) {
+      const err: ApiError = {
+        status: 404,
+        code: 'USER_NOT_FOUND',
+        message: `Reviewer with email "${p.reviewerEmail}" was not found.`,
+      };
+      throw err;
+    }
+
+    const reviews = mockStorage.getReviews();
+    const nextReviewId = reviews.length > 0 ? Math.max(...reviews.map((r) => r.id)) + 1 : 1;
+
+    const assignment: ReviewAssignment = {
+      id: nextReviewId,
+      experimentId: exp.id,
+      runId: run.id,
+      researcherId: auth.user.id,
+      reviewerId: reviewer.id,
+      status: 'pending',
+      assignedAt: new Date().toISOString(),
+    };
+
+    reviews.unshift(assignment);
+    mockStorage.saveReviews(reviews);
+
+    // Update experiment review status
+    exp.reviewStatus = 'pending';
+    mockStorage.saveExperiments(experiments);
+
+    return assignment;
+  }
+
+  async listAssignedReviews(): Promise<Array<ReviewAssignment & { experiment: Experiment }>> {
+    await delay(150);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const reviews = mockStorage.getReviews();
+    const experiments = mockStorage.getExperiments();
+
+    // Reviewers see assignments made to them; researchers see assignments for their experiments
+    const userReviews = reviews.filter((r) =>
+      auth.user.role === 'reviewer' ? r.reviewerId === auth.user.id : r.researcherId === auth.user.id,
+    );
+
+    return userReviews
+      .map((r) => {
+        const exp = experiments.find((e) => e.id === r.experimentId);
+        return exp ? { ...r, experiment: exp } : null;
+      })
+      .filter((item): item is ReviewAssignment & { experiment: Experiment } => item !== null);
+  }
+
+  async getReview(
+    id: number,
+  ): Promise<{ assignment: ReviewAssignment; comments: ReviewComment[]; annotations: ReviewAnnotation[] }> {
+    await delay(100);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const reviews = mockStorage.getReviews();
+    const assignment = reviews.find((r) => r.id === id);
+    if (!assignment) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Review assignment not found.' };
+      throw err;
+    }
+
+    // Access control check: must be either the assigned reviewer or the experiment researcher
+    if (auth.user.role === 'reviewer' && assignment.reviewerId !== auth.user.id) {
+      const err: ApiError = {
+        status: 403,
+        code: 'FORBIDDEN',
+        message: 'Access denied: You are not assigned to review this experiment.',
+      };
+      throw err;
+    }
+
+    const commentsMap = mockStorage.getReviewComments();
+    const annotationsMap = mockStorage.getReviewAnnotations();
+
+    return {
+      assignment,
+      comments: commentsMap[id] || [],
+      annotations: annotationsMap[id] || [],
+    };
+  }
+
+  async addAnnotation(
+    reviewId: number,
+    p: Pick<ReviewAnnotation, 'objectId' | 'region' | 'suggestion'>,
+  ): Promise<ReviewAnnotation> {
+    await delay(100);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const annotationsMap = mockStorage.getReviewAnnotations();
+    const list = annotationsMap[reviewId] || [];
+    const allAnnotations = Object.values(annotationsMap).flat();
+    const nextId = allAnnotations.length > 0 ? Math.max(...allAnnotations.map((a) => a.id)) + 1 : 1;
+
+    const annotation: ReviewAnnotation = {
+      id: nextId,
+      reviewId,
+      objectId: p.objectId,
+      region: p.region,
+      suggestion: p.suggestion.trim(),
+      status: 'open',
+      authorId: auth.user.id,
+      createdAt: new Date().toISOString(),
+    };
+
+    list.unshift(annotation);
+    annotationsMap[reviewId] = list;
+    mockStorage.saveReviewAnnotations(annotationsMap);
+    return annotation;
+  }
+
+  async addComment(reviewId: number, text: string): Promise<ReviewComment> {
+    await delay(100);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const commentsMap = mockStorage.getReviewComments();
+    const list = commentsMap[reviewId] || [];
+    const allComments = Object.values(commentsMap).flat();
+    const nextId = allComments.length > 0 ? Math.max(...allComments.map((c) => c.id)) + 1 : 1;
+
+    const comment: ReviewComment = {
+      id: nextId,
+      reviewId,
+      authorId: auth.user.id,
+      authorName: auth.user.name,
+      text: text.trim(),
+      createdAt: new Date().toISOString(),
+    };
+
+    list.push(comment);
+    commentsMap[reviewId] = list;
+    mockStorage.saveReviewComments(commentsMap);
+    return comment;
+  }
+
+  async decide(
+    reviewId: number,
+    p: { decision: 'approved' | 'changes_requested'; comment?: string },
+  ): Promise<ReviewAssignment> {
+    await delay(150);
+    const auth = mockStorage.getAuth();
+    if (!auth) {
+      const err: ApiError = { status: 401, code: 'UNAUTHORIZED', message: 'Authentication required.' };
+      throw err;
+    }
+
+    const reviews = mockStorage.getReviews();
+    const assignment = reviews.find((r) => r.id === reviewId);
+    if (!assignment) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Review assignment not found.' };
+      throw err;
+    }
+
+    if (auth.user.role === 'reviewer' && assignment.reviewerId !== auth.user.id) {
+      const err: ApiError = {
+        status: 403,
+        code: 'FORBIDDEN',
+        message: 'Access denied: You cannot decide reviews not assigned to you.',
+      };
+      throw err;
+    }
+
+    assignment.status = p.decision;
+    mockStorage.saveReviews(reviews);
+
+    // Update experiment reviewStatus
+    const experiments = mockStorage.getExperiments();
+    const exp = experiments.find((e) => e.id === assignment.experimentId);
+    if (exp) {
+      exp.reviewStatus = p.decision;
+      mockStorage.saveExperiments(experiments);
+    }
+
+    // Record decision comment if provided
+    if (p.comment && p.comment.trim() !== '') {
+      await this.addComment(
+        reviewId,
+        `Decision: ${p.decision === 'approved' ? 'Approved' : 'Changes Requested'} — ${p.comment.trim()}`,
+      );
+    }
+
+    return assignment;
+  }
+
+  async resolveAnnotation(annotationId: number, status: 'accepted' | 'rejected'): Promise<ReviewAnnotation> {
+    await delay(100);
+    const annotationsMap = mockStorage.getReviewAnnotations();
+    let found: ReviewAnnotation | null = null;
+
+    for (const key of Object.keys(annotationsMap)) {
+      const revId = Number(key);
+      const list = annotationsMap[revId];
+      const match = list.find((a) => a.id === annotationId);
+      if (match) {
+        match.status = status;
+        found = match;
+        break;
+      }
+    }
+
+    if (!found) {
+      const err: ApiError = { status: 404, code: 'NOT_FOUND', message: 'Annotation not found.' };
+      throw err;
+    }
+
+    mockStorage.saveReviewAnnotations(annotationsMap);
+    return found;
   }
 
   async exportAnnotatedImage(_runId: number): Promise<Blob> {
@@ -637,46 +886,6 @@ export class MockAdapter implements CellScopeApi {
 
   async compareRuns(_runIds: number[]): Promise<RunComparison> {
     throw new Error('MockAdapter: compareRuns scheduled for Milestone M5');
-  }
-
-  // reviews
-  async sendForReview(_p: { runId: number; reviewerEmail: string }): Promise<ReviewAssignment> {
-    throw new Error('MockAdapter: sendForReview scheduled for Milestone M4');
-  }
-
-  async listAssignedReviews(): Promise<Array<ReviewAssignment & { experiment: Experiment }>> {
-    return [];
-  }
-
-  async getReview(
-    _id: number,
-  ): Promise<{ assignment: ReviewAssignment; comments: ReviewComment[]; annotations: ReviewAnnotation[] }> {
-    throw new Error('MockAdapter: getReview scheduled for Milestone M4');
-  }
-
-  async addAnnotation(
-    _reviewId: number,
-    _p: Pick<ReviewAnnotation, 'objectId' | 'region' | 'suggestion'>,
-  ): Promise<ReviewAnnotation> {
-    throw new Error('MockAdapter: addAnnotation scheduled for Milestone M4');
-  }
-
-  async addComment(_reviewId: number, _text: string): Promise<ReviewComment> {
-    throw new Error('MockAdapter: addComment not implemented yet');
-  }
-
-  async decide(
-    _reviewId: number,
-    _p: { decision: 'approved' | 'changes_requested'; comment?: string },
-  ): Promise<ReviewAssignment> {
-    throw new Error('MockAdapter: decide scheduled for Milestone M4');
-  }
-
-  async resolveAnnotation(
-    _annotationId: number,
-    _status: 'accepted' | 'rejected',
-  ): Promise<ReviewAnnotation> {
-    throw new Error('MockAdapter: resolveAnnotation scheduled for Milestone M4');
   }
 
   // assistant (Gemini Guide)

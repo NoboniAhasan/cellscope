@@ -1,4 +1,14 @@
-import { AnalysisRun, CellMeasurement, Experiment, QualityWarning, Role, User } from '../../types';
+import {
+  AnalysisRun,
+  CellMeasurement,
+  Experiment,
+  QualityWarning,
+  ReviewAnnotation,
+  ReviewAssignment,
+  ReviewComment,
+  Role,
+  User,
+} from '../../types';
 
 export interface StoredUser extends User {
   passwordHash: string;
@@ -11,6 +21,9 @@ const STORAGE_KEY_RUNS = 'cellscope_runs';
 const STORAGE_KEY_MEASUREMENTS = 'cellscope_measurements';
 const STORAGE_KEY_QUALITY = 'cellscope_quality_warnings';
 const STORAGE_KEY_IMAGE_DATA = 'cellscope_image_data';
+const STORAGE_KEY_REVIEWS = 'cellscope_reviews';
+const STORAGE_KEY_REVIEW_COMMENTS = 'cellscope_review_comments';
+const STORAGE_KEY_REVIEW_ANNOTATIONS = 'cellscope_review_annotations';
 
 export const SAMPLE_FLUORESCENCE_IMAGE =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="450" viewBox="0 0 600 450"><rect width="600" height="450" fill="%23050914"/><circle cx="150" cy="120" r="32" fill="%2338bdf8" filter="blur(3px)" opacity="0.9"/><circle cx="150" cy="120" r="22" fill="%23e0f2fe"/><circle cx="360" cy="180" r="40" fill="%230ea5e9" filter="blur(4px)" opacity="0.85"/><circle cx="360" cy="180" r="26" fill="%23ffffff"/><circle cx="230" cy="310" r="35" fill="%230284c7" filter="blur(3px)" opacity="0.9"/><circle cx="230" cy="310" r="20" fill="%23bae6fd"/><circle cx="470" cy="280" r="28" fill="%2338bdf8" filter="blur(2px)" opacity="0.85"/><circle cx="470" cy="280" r="18" fill="%23e0f2fe"/><circle cx="80" cy="250" r="24" fill="%230284c7" filter="blur(3px)" opacity="0.8"/><circle cx="80" cy="250" r="15" fill="%23bae6fd"/><text x="15" y="435" fill="%2394a3b8" font-family="sans-serif" font-size="12">CellScope Sample: DAPI Fluorescence Stain (600x450)</text></svg>';
@@ -208,6 +221,49 @@ export const mockStorage = {
     safeSet(STORAGE_KEY_IMAGE_DATA, JSON.stringify(map));
   },
 
+  // Review System Storage
+  getReviews(): ReviewAssignment[] {
+    const raw = safeGet(STORAGE_KEY_REVIEWS);
+    if (!raw) return [];
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  },
+
+  saveReviews(reviews: ReviewAssignment[]): void {
+    safeSet(STORAGE_KEY_REVIEWS, JSON.stringify(reviews));
+  },
+
+  getReviewComments(): Record<number, ReviewComment[]> {
+    const raw = safeGet(STORAGE_KEY_REVIEW_COMMENTS);
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
+
+  saveReviewComments(map: Record<number, ReviewComment[]>): void {
+    safeSet(STORAGE_KEY_REVIEW_COMMENTS, JSON.stringify(map));
+  },
+
+  getReviewAnnotations(): Record<number, ReviewAnnotation[]> {
+    const raw = safeGet(STORAGE_KEY_REVIEW_ANNOTATIONS);
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  },
+
+  saveReviewAnnotations(map: Record<number, ReviewAnnotation[]>): void {
+    safeSet(STORAGE_KEY_REVIEW_ANNOTATIONS, JSON.stringify(map));
+  },
+
   reset(): void {
     safeRemove(STORAGE_KEY_USERS);
     safeRemove(STORAGE_KEY_AUTH);
@@ -216,5 +272,8 @@ export const mockStorage = {
     safeRemove(STORAGE_KEY_MEASUREMENTS);
     safeRemove(STORAGE_KEY_QUALITY);
     safeRemove(STORAGE_KEY_IMAGE_DATA);
+    safeRemove(STORAGE_KEY_REVIEWS);
+    safeRemove(STORAGE_KEY_REVIEW_COMMENTS);
+    safeRemove(STORAGE_KEY_REVIEW_ANNOTATIONS);
   },
 };

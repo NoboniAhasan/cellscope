@@ -15,6 +15,8 @@ import { SizeHistogram } from '../analysis/SizeHistogram';
 import { useCorrectionHistory } from '../image-editor/useCorrectionHistory';
 import { SaveVersionModal } from '../analysis/SaveVersionModal';
 import { VersionHistoryPanel } from '../analysis/VersionHistoryPanel';
+import { SendForReviewModal } from '../reviews/SendForReviewModal';
+import { ReviewFeedbackPanel } from '../reviews/ReviewFeedbackPanel';
 
 const DEFAULT_PARAMETERS: AnalysisParameters = {
   preset: 'fluorescence',
@@ -36,6 +38,7 @@ export function ExperimentDetailPage() {
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [editMode, setEditMode] = useState<CanvasEditMode>('inspect');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [isSendReviewOpen, setIsSendReviewOpen] = useState(false);
 
   // 1. Fetch Experiment
   const {
@@ -65,7 +68,6 @@ export function ExperimentDetailPage() {
     enabled: !isNaN(experimentId),
   });
 
-  // Set default activeRunId to the latest run if not set
   useEffect(() => {
     if (runs.length > 0 && !activeRunId) {
       setActiveRunId(runs[0].id);
@@ -82,14 +84,31 @@ export function ExperimentDetailPage() {
     enabled: !!activeRun,
   });
 
-  // 5. Fetch Measurements for v1 Run (for comparison)
+  // 5. Fetch Measurements for v1 Run
   const { data: v1Measurements = [] } = useQuery({
     queryKey: ['measurements', v1Run?.id],
     queryFn: () => api.getMeasurements(v1Run!.id),
     enabled: !!v1Run,
   });
 
-  // 6. Correction History & Undo/Redo Engine
+  // 6. Fetch Reviews for this experiment
+  const { data: allAssignedReviews = [] } = useQuery({
+    queryKey: ['assignedReviews'],
+    queryFn: () => api.listAssignedReviews(),
+  });
+
+  const activeReviewAssignment = allAssignedReviews.find(
+    (a) => a.experimentId === experimentId,
+  );
+
+  // 7. Fetch Review Bundle Details (Comments & Annotations)
+  const { data: reviewBundle } = useQuery({
+    queryKey: ['review', activeReviewAssignment?.id],
+    queryFn: () => api.getReview(activeReviewAssignment!.id),
+    enabled: !!activeReviewAssignment,
+  });
+
+  // 8. Correction History & Undo/Redo Engine
   const {
     items: localMeasurements,
     deleteObject,
@@ -105,13 +124,11 @@ export function ExperimentDetailPage() {
     editCount,
   } = useCorrectionHistory(serverMeasurements);
 
-  // Sync correction engine baseline when active run changes on server
   useEffect(() => {
     resetHistory(serverMeasurements);
     setSelectedObjectId(null);
   }, [serverMeasurements, resetHistory]);
 
-  // Keyboard shortcut listener for Undo/Redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -128,7 +145,7 @@ export function ExperimentDetailPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [canUndo, canRedo, undo, redo]);
 
-  // 7. Post-run Quality Warnings
+  // 9. Post-run Quality Warnings
   const { data: postRunWarnings = [] } = useQuery({
     queryKey: ['postRunQuality', activeRun?.id],
     queryFn: () => api.getQuality(activeRun!.id),
@@ -143,7 +160,7 @@ export function ExperimentDetailPage() {
     },
   });
 
-  // Run Analysis Mutation (Generates v1)
+  // Run Analysis Mutation
   const runMutation = useMutation({
     mutationFn: () =>
       api.runAnalysis({
@@ -159,7 +176,7 @@ export function ExperimentDetailPage() {
     },
   });
 
-  // Save Correction Mutation (Generates Version N+1)
+  // Save Correction Mutation
   const saveCorrectionMutation = useMutation({
     mutationFn: (changeNote: string) => {
       const diff = getDiff();
@@ -180,7 +197,20 @@ export function ExperimentDetailPage() {
     },
   });
 
-  // CSV Export Handler (Exports active run)
+  // Send for Review Mutation
+  const sendForReviewMutation = useMutation({
+    mutationFn: (reviewerEmail: string) =>
+      api.sendForReview({
+        runId: activeRun.id,
+        reviewerEmail,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['experiment', experimentId] });
+      queryClient.invalidateQueries({ queryKey: ['assignedReviews'] });
+    },
+  });
+
+  // CSV Export Handler
   const handleExportCsv = async () => {
     if (!activeRun) return;
     const blob = await api.exportCsv(activeRun.id);
@@ -192,7 +222,6 @@ export function ExperimentDetailPage() {
     window.URL.revokeObjectURL(url);
   };
 
-  // Filtered measurements
   const filteredMeasurements = useMemo(() => {
     return localMeasurements.filter((m) => m.area >= minAreaDisplayFilter);
   }, [localMeasurements, minAreaDisplayFilter]);
@@ -244,6 +273,13 @@ export function ExperimentDetailPage() {
             <Badge variant="demo">Demo result</Badge>
             <button
               type="button"
+              onClick={() => setIsSendReviewOpen(true)}
+              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
+            >
+              <span>✉️ Send for Review</span>
+            </button>
+            <button
+              type="button"
               onClick={handleExportCsv}
               className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
             >
@@ -262,6 +298,19 @@ export function ExperimentDetailPage() {
                 {experiment.title}
               </h1>
               {experiment.isDemo && <Badge variant="demo">Demo result</Badge>}
+              {experiment.reviewStatus && (
+                <Badge
+                  variant={
+                    experiment.reviewStatus === 'approved'
+                      ? 'success'
+                      : experiment.reviewStatus === 'changes_requested'
+                      ? 'warning'
+                      : 'neutral'
+                  }
+                >
+                  Review: {experiment.reviewStatus.replace('_', ' ')}
+                </Badge>
+              )}
             </div>
 
             {experiment.sampleReference && (
@@ -291,6 +340,15 @@ export function ExperimentDetailPage() {
         </div>
       </div>
 
+      {/* Review Feedback Panel (Milestone M4) */}
+      {activeReviewAssignment && reviewBundle && (
+        <ReviewFeedbackPanel
+          reviewAssignment={activeReviewAssignment}
+          annotations={reviewBundle.annotations}
+          comments={reviewBundle.comments}
+        />
+      )}
+
       {/* Upload Zone (If no files uploaded) */}
       {!activeFile ? (
         <div className="space-y-4">
@@ -307,7 +365,6 @@ export function ExperimentDetailPage() {
       ) : (
         /* Core Slice & Correction Workspace */
         <div className="space-y-6">
-          {/* Quality Warnings */}
           {preRunWarnings.length > 0 && (
             <QualityWarningBanner warnings={preRunWarnings} title="Pre-run Specimen Assessment" />
           )}
@@ -316,7 +373,7 @@ export function ExperimentDetailPage() {
             <QualityWarningBanner warnings={postRunWarnings} title="Analysis Run Quality Warnings" />
           )}
 
-          {/* Interactive Correction Toolbar (Milestone M3) */}
+          {/* Correction Toolbar (Milestone M3) */}
           {activeRun && (
             <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -375,7 +432,6 @@ export function ExperimentDetailPage() {
                 )}
               </div>
 
-              {/* Undo / Redo & Save Version Controls */}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -454,9 +510,8 @@ export function ExperimentDetailPage() {
               )}
             </div>
 
-            {/* Right Column: Parameters, Inspector & Version History (4 cols) */}
+            {/* Right Column: Version History, Parameters, Inspector (4 cols) */}
             <div className="lg:col-span-4 space-y-5">
-              {/* Version History & Comparison Panel (Milestone M3) */}
               {runs.length > 0 && activeRun && (
                 <VersionHistoryPanel
                   runs={runs}
@@ -471,7 +526,6 @@ export function ExperimentDetailPage() {
                 />
               )}
 
-              {/* Analysis Settings (Re-run automation) */}
               <AnalysisSettingsPanel
                 parameters={parameters}
                 onChange={(p) => setParameters(p)}
@@ -479,7 +533,6 @@ export function ExperimentDetailPage() {
                 isRunning={runMutation.isPending}
               />
 
-              {/* Candidate Object Inspector Card */}
               {localMeasurements.length > 0 && (
                 <ObjectDetailCard
                   measurement={selectedMeasurement}
@@ -502,6 +555,19 @@ export function ExperimentDetailPage() {
             await saveCorrectionMutation.mutateAsync(changeNote);
           }}
           isSaving={saveCorrectionMutation.isPending}
+        />
+      )}
+
+      {/* Send for Review Modal */}
+      {activeRun && (
+        <SendForReviewModal
+          isOpen={isSendReviewOpen}
+          onClose={() => setIsSendReviewOpen(false)}
+          runVersion={activeRun.version}
+          onConfirm={async (email) => {
+            await sendForReviewMutation.mutateAsync(email);
+          }}
+          isSending={sendForReviewMutation.isPending}
         />
       )}
     </div>

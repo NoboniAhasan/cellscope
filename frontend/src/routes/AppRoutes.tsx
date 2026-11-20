@@ -5,6 +5,7 @@ import { RegisterPage } from '../features/auth/RegisterPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { ExperimentDetailPage } from '../features/experiments/ExperimentDetailPage';
 import { AssignedReviewsPage } from '../features/reviews/AssignedReviewsPage';
+import { ReviewDetailPage } from '../features/reviews/ReviewDetailPage';
 import { Layout } from '../components/Layout';
 import { ProtectedRoute } from './ProtectedRoute';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -35,7 +36,6 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        {/* Root redirect based on authentication and role */}
         <Route path="/" element={<HomeRedirect />} />
 
         {/* Public Auth Routes */}
@@ -66,6 +66,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['reviewer']}>
               <AssignedReviewsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reviews/:id"
+          element={
+            <ProtectedRoute allowedRoles={['reviewer', 'researcher']}>
+              <ReviewDetailPage />
             </ProtectedRoute>
           }
         />
