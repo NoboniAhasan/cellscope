@@ -59,7 +59,8 @@ export interface CellScopeApi {
   resolveAnnotation(annotationId: number, status: 'accepted' | 'rejected'): Promise<ReviewAnnotation>;
 
   // assistant (Gemini Guide)
-  explain(p: { analysisId: number; question: string; language: 'en' | 'bn' }): Promise<{ answer: string; language: 'en' | 'bn' }>;
+  // errorMode is a Phase 1 dev-only param for simulating errors; Phase 2 adapter ignores it.
+  explain(p: { analysisId: number; question: string; language: 'en' | 'bn'; errorMode?: 'none' | 'timeout' | 'quota' | 'generic' }): Promise<{ answer: string; language: 'en' | 'bn' }>;
 }
 
 const useMock = import.meta.env.VITE_USE_MOCK !== 'false';

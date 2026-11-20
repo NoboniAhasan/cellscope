@@ -1056,12 +1056,137 @@ export class MockAdapter implements CellScopeApi {
   }
 
   // assistant (Gemini Guide)
-  async explain(_p: {
+  async explain(p: {
     analysisId: number;
     question: string;
     language: 'en' | 'bn';
+    errorMode?: 'none' | 'timeout' | 'quota' | 'generic';
   }): Promise<{ answer: string; language: 'en' | 'bn' }> {
-    throw new Error('MockAdapter: explain scheduled for Milestone M6');
+    await delay(600 + Math.random() * 400);
+
+    // Dev error simulation
+    const mode = p.errorMode ?? 'none';
+    if (mode === 'timeout') {
+      const err: any = new Error('Request timed out. Please try again.');
+      err.status = 408;
+      throw err;
+    }
+    if (mode === 'quota') {
+      const err: any = new Error('Quota exceeded. Please wait before asking another question.');
+      err.status = 429;
+      throw err;
+    }
+    if (mode === 'generic') {
+      const err: any = new Error('An unexpected error occurred (500). Please try again later.');
+      err.status = 500;
+      throw err;
+    }
+
+    // Gather run context for dynamic answers
+    const runs = mockStorage.getRuns();
+    const experiments = mockStorage.getExperiments();
+    const measurementsMap = mockStorage.getMeasurements();
+    const run = runs.find((r) => r.id === p.analysisId);
+    const experiment = run ? experiments.find((e) => e.id === run.experimentId) : null;
+    const measurements = run ? measurementsMap[run.id] ?? [] : [];
+
+    const count = measurements.length;
+    const meanArea =
+      count > 0 ? Math.round(measurements.reduce((a, m) => a + m.area, 0) / count) : 0;
+    const meanCircularity =
+      count > 0
+        ? Math.round((measurements.reduce((a, m) => a + m.circularity, 0) / count) * 100) / 100
+        : 0;
+    const preset = run?.parameters.preset ?? 'fluorescence';
+    const minArea = run?.parameters.minArea ?? 100;
+    const polarity = run?.parameters.polarity ?? 'bright_on_dark';
+    const expTitle = experiment?.title ?? 'this experiment';
+    const version = run?.version ?? 1;
+
+    const q = p.question.toLowerCase();
+    const lang = p.language;
+    const isBn = lang === 'bn';
+
+    let answer: string;
+
+    // Context-aware responses
+    const isDetectionQ =
+      q.includes('not detected') || q.includes('শনাক্ত হয়নি') || q.includes('missed');
+    const isWarningQ =
+      q.includes('warning') || q.includes('সতর্কবার্তা') || q.includes('warn');
+    const isCircularityQ =
+      q.includes('circularity') || q.includes('বৃত্তাকারতা') || q.includes('circular');
+
+    if (isDetectionQ) {
+      if (isBn) {
+        answer =
+          `"${expTitle}"-এর v${version} বিশ্লেষণে ${count}টি ক্যান্ডিডেট অবজেক্ট শনাক্ত করা হয়েছে। ` +
+          `কিছু অবজেক্ট শনাক্ত না হওয়ার কারণগুলো হলো:\n` +
+          `• ন্যূনতম ক্ষেত্রফল ফিল্টার (min-area = ${minArea} px²) — এর চেয়ে ছোট অবজেক্টগুলো বাদ দেওয়া হয়েছে।\n` +
+          `• "${preset}" প্রিসেটের থ্রেশহোল্ড — কম কনট্রাস্টের অবজেক্টগুলো হয়তো ব্যাকগ্রাউন্ডের মতো দেখাচ্ছিল।\n` +
+          `• পোলারিটি "${polarity}" — বিপরীত পোলারিটির অবজেক্টগুলো বাদ পড়তে পারে।\n` +
+          `সমাধান: min-area কমিয়ে দেখুন অথবা অন্য প্রিসেট ব্যবহার করুন।`;
+      } else {
+        answer =
+          `In v${version} of "${expTitle}", ${count} candidate objects were detected. ` +
+          `Some objects may have been missed for these reasons:\n` +
+          `• Min-area filter (${minArea} px²) — objects smaller than this threshold are excluded.\n` +
+          `• The "${preset}" preset threshold — low-contrast objects may appear indistinguishable from background.\n` +
+          `• Polarity is "${polarity}" — objects of opposite polarity won't be segmented.\n` +
+          `Try reducing the min-area filter or switching to a different preset to capture more objects.`;
+      }
+    } else if (isWarningQ) {
+      if (count === 0) {
+        answer = isBn
+          ? 'এই রানে কোনো সতর্কবার্তা নেই এবং কোনো ক্যান্ডিডেট অবজেক্ট শনাক্ত হয়নি। সেটিংস পরীক্ষা করুন।'
+          : 'No objects were detected in this run, which may itself be a quality concern. Check your settings and image quality.';
+      } else {
+        answer = isBn
+          ? `সতর্কবার্তাগুলো ইমেজের গুণমান বা বিশ্লেষণের সম্ভাব্য সমস্যা নির্দেশ করে। ` +
+            `যেমন: LOW_CONTRAST মানে থ্রেশহোল্ড সঠিকভাবে কাজ নাও করতে পারে। ` +
+            `EXCESSIVE_BLUR মানে ছবি ঝাপসা। ` +
+            `সতর্কবার্তার পাশের "suggestion" পড়ুন এবং সেটিংস অ্যাডজাস্ট করুন।`
+          : `Warnings indicate potential issues with image quality or analysis reliability. ` +
+            `For example: LOW_CONTRAST means the threshold may not separate foreground from background reliably. ` +
+            `EXCESSIVE_BLUR means the image may be too blurred for accurate segmentation. ` +
+            `Read each warning's suggestion text and adjust settings accordingly.`;
+      }
+    } else if (isCircularityQ) {
+      if (isBn) {
+        answer =
+          `Circularity (বৃত্তাকারতা) হলো একটি আকৃতি পরিমাপ।\n` +
+          `সূত্র: C = 4π × Area / Perimeter²\n` +
+          `• C = 1.0 মানে নিখুঁত বৃত্ত।\n` +
+          `• C < 1.0 মানে লম্বাটে বা অনিয়মিত আকৃতি।\n` +
+          `এই রানে (v${version}) গড় circularity হলো ${meanCircularity}, গড় ক্ষেত্রফল ${meanArea} px²।\n` +
+          `মনে রাখুন: এটি শুধুমাত্র আকৃতির পরিমাপ, কোষের ধরন নয়।`;
+      } else {
+        answer =
+          `Circularity is a shape metric computed as C = 4π × Area / Perimeter².\n` +
+          `• C = 1.0 is a perfect circle.\n` +
+          `• C < 1.0 means the object is elongated or irregular.\n` +
+          `In this run (v${version}), the mean circularity is ${meanCircularity} across ${count} candidate objects, with a mean area of ${meanArea} px².\n` +
+          `Note: Circularity is a geometric descriptor only — it does not confirm cell type.`;
+      }
+    } else {
+      // Generic context-aware response
+      if (isBn) {
+        answer =
+          `"${expTitle}" (v${version}) বিশ্লেষণ সম্পর্কে আপনার প্রশ্ন: "${p.question}"\n\n` +
+          `এই রানে ${count}টি ক্যান্ডিডেট অবজেক্ট শনাক্ত হয়েছে। ` +
+          `গড় ক্ষেত্রফল: ${meanArea} px², গড় circularity: ${meanCircularity}। ` +
+          `প্রিসেট: "${preset}", পোলারিটি: "${polarity}"।\n\n` +
+          `এটি একটি মক (Demo) উত্তর। প্রকৃত Gemini API Phase 2-তে সংযুক্ত হবে।`;
+      } else {
+        answer =
+          `Your question about "${expTitle}" (v${version}): "${p.question}"\n\n` +
+          `This run detected ${count} candidate objects with a mean area of ${meanArea} px² and mean circularity of ${meanCircularity}. ` +
+          `Settings: preset "${preset}", polarity "${polarity}".\n\n` +
+          `This is a mocked (Demo) response. The real Gemini API will be connected in Phase 2.`;
+      }
+    }
+
+    return { answer, language: lang };
   }
 }
 

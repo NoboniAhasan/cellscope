@@ -17,6 +17,7 @@ import { SaveVersionModal } from '../analysis/SaveVersionModal';
 import { VersionHistoryPanel } from '../analysis/VersionHistoryPanel';
 import { SendForReviewModal } from '../reviews/SendForReviewModal';
 import { ReviewFeedbackPanel } from '../reviews/ReviewFeedbackPanel';
+import { GeminiGuidePanel } from '../assistant/GeminiGuidePanel';
 
 const DEFAULT_PARAMETERS: AnalysisParameters = {
   preset: 'fluorescence',
@@ -579,6 +580,11 @@ export function ExperimentDetailPage() {
                   onDeselect={() => setSelectedObjectId(null)}
                 />
               )}
+
+              {/* Gemini Guide Panel (Milestone M6) */}
+              <GeminiGuidePanel
+                run={activeRun ?? null}
+              />
             </div>
           </div>
         </div>
